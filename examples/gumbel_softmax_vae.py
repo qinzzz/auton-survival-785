@@ -74,17 +74,24 @@ def load_support():
     te_size = int(n*0.20)
 
     x_train, x_test, x_val = x[:tr_size], x[-te_size:], x[tr_size:tr_size+vl_size]
-    # t_train, t_test, t_val = t[:tr_size], t[-te_size:], t[tr_size:tr_size+vl_size]
-    # e_train, e_test, e_val = e[:tr_size], e[-te_size:], e[tr_size:tr_size+vl_size]
-    x_train = (x_train - x_train.mean(axis=0))/x_train.std(axis=0)
-    x_test = (x_test - x_test.mean(axis=0))/x_test.std(axis=0)
 
+    # x_train = x_train[:, :18]
+    # x_val = x_val[:, :18]
+
+    # x_train = (x_train - x_train.mean(axis=0))/x_train.std(axis=0)
+    # x_test = (x_test - x_test.mean(axis=0))/x_test.std(axis=0)
+    train_min = x_train.min(axis=0)
+    train_max = x_train.max(axis=0)
+    val_min = x_val.min(axis=0)
+    val_max = x_val.max(axis=0)
+
+    x_train = (x_train-train_min)/(train_max - train_min)
+    x_val = (x_val-val_min)/(val_max - val_min)
+    # print("x_train", x_train[:10])
+    # print("x_train", x_train.min(axis=0), x_train.max(axis=0))
     # convert to float
     x_train = x_train.astype(np.float32)
     x_val = x_val.astype(np.float32)
-    # normalize data to [0, 1]
-    x_train = (x_train-x_train.min()) / (x_train.max()-x_train.min())
-    x_val = (x_val-x_val.min()) / (x_val.max()-x_val.min())
 
     train_loader = torch.utils.data.DataLoader(x_train, batch_size=args.batch_size, shuffle=True)
     val_loader = torch.utils.data.DataLoader(x_val, batch_size=args.batch_size, shuffle=True)
@@ -103,7 +110,7 @@ def gumbel_softmax_sample(logits, temperature):
     return F.softmax(y / temperature, dim=-1)
 
 
-def gumbel_softmax(logits, temperature, hard=False):
+def gumbel_softmax(logits, temperature, hard=False, latent_dim=3, categorical_dim=3):
     """
     ST-gumple-softmax
     input: [*, n_class]
@@ -125,19 +132,19 @@ def gumbel_softmax(logits, temperature, hard=False):
 
 
 class VAE_gumbel(nn.Module):
-    def __init__(self, latent_dim=30, categorical_dim=3):
+    def __init__(self, latent_dim=3, categorical_dim=3):
         super(VAE_gumbel, self).__init__()
 
         self.latent_dim = latent_dim
         self.categorical_dim = categorical_dim
 
-        self.fc1 = nn.Linear(38, 512)
-        self.fc2 = nn.Linear(512, 512)
-        self.fc3 = nn.Linear(512, latent_dim * categorical_dim)
+        self.fc1 = nn.Linear(38, 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, latent_dim * categorical_dim)
 
-        self.fc4 = nn.Linear(latent_dim * categorical_dim, 512)
-        self.fc5 = nn.Linear(512, 512)
-        self.fc6 = nn.Linear(512, 38)
+        self.fc4 = nn.Linear(latent_dim * categorical_dim, 128)
+        self.fc5 = nn.Linear(128, 256)
+        self.fc6 = nn.Linear(256, 38)
 
         self.relu = nn.ReLU()
         self.sigmoid = nn.Sigmoid()
@@ -156,64 +163,59 @@ class VAE_gumbel(nn.Module):
         # q = self.encode(x.view(-1, 784))
         q = self.encode(x)
         q_y = q.view(q.size(0), self.latent_dim, self.categorical_dim)
-        z = gumbel_softmax(q_y, temp, hard)
+        z = gumbel_softmax(q_y, temp, hard, self.latent_dim, self.categorical_dim)
         return self.decode(z), F.softmax(q_y, dim=-1).reshape(*q.size())
 
-
-latent_dim = 30
-categorical_dim = 3  # one-of-K vector
-
-temp_min = 0.5
-ANNEAL_RATE = 0.00003
-
-model = VAE_gumbel()
-if args.cuda:
-    model.cuda()
-
-optimizer = optim.Adam(model.parameters(), lr=1e-5)
-
-
 # Reconstruction + KL divergence losses summed over all elements and batch
-def loss_function(recon_x, x, qy):
-    BCE = F.binary_cross_entropy(recon_x, x, size_average=False) / x.shape[0]
-
+def loss_function(recon_x, x, qy, categorical_dim):
+    BCE = F.binary_cross_entropy(recon_x, x, reduction="mean")
+    # print("recon_x", recon_x[0])
+    # print("x", x[0])
+    # print("qy", qy[0])
+    # print("BCE loss=", BCE)
     log_ratio = torch.log(qy * categorical_dim + 1e-20)
     KLD = torch.sum(qy * log_ratio, dim=-1).mean()
 
-    return BCE + KLD
+    return BCE, 0.01 * KLD
 
 
-def train(epoch, train_loader):
+def train(model, epoch, train_loader, optimizer, ANNEAL_RATE, temp_min, categorical_dim):
     model.train()
     train_loss = 0
+    bce_loss = 0
+    kld_loss = 0
     temp = args.temp
     for batch_idx, data in enumerate(train_loader):
-        # print("batch idx", batch_idx)
         if args.cuda:
             data = data.cuda()
         optimizer.zero_grad()
+
         recon_batch, qy = model(data, temp, args.hard)
-        # print("original data", data[:2])
-        # print("recon batch", recon_batch[:2])
-        loss = loss_function(recon_batch, data, qy)
+        bce, kld = loss_function(recon_batch, data, qy, categorical_dim)
+        print(qy[0])
+        loss = bce + kld
+        bce_loss += bce.item() * len(data)
+        kld_loss += kld.item() * len(data)
         loss.backward()
         train_loss += loss.item() * len(data)
         optimizer.step()
         if batch_idx % 100 == 1:
             temp = np.maximum(temp * np.exp(-ANNEAL_RATE * batch_idx), temp_min)
 
-        if (batch_idx % args.log_interval + 1) == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+    print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\t BCE Loss:{:.6f}\t KLD Loss:{:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                        100. * batch_idx / len(train_loader),
-                       loss.item()))
-        
-
+                       loss.item(), bce.item(), kld.item()))
+    
+    n = data.size(0)
+    comparison = torch.cat([data, recon_batch])
+    save_image(comparison.data.cpu(),
+            '../training/support/train_' + str(epoch) + '.png', nrow=n)
     print('====> Epoch: {} Average loss: {:.4f}'.format(
         epoch, train_loss / len(train_loader.dataset)))
 
 
-def test(epoch, test_loader):
+def test(model, epoch, test_loader, optimizer, ANNEAL_RATE, temp_min, categorical_dim):
     model.eval()
     test_loss = 0
     temp = args.temp
@@ -221,7 +223,8 @@ def test(epoch, test_loader):
         if args.cuda:
             data = data.cuda()
         recon_batch, qy = model(data, temp, args.hard)
-        test_loss += loss_function(recon_batch, data, qy).item() * len(data)
+        bce, kld = loss_function(recon_batch, data, qy, categorical_dim)
+        test_loss += (bce + kld).item() * len(data)
         if i % 100 == 1:
             temp = np.maximum(temp * np.exp(-ANNEAL_RATE * i), temp_min)
         if i == 0:
@@ -235,7 +238,7 @@ def test(epoch, test_loader):
     print('====> Test set loss: {:.4f}'.format(test_loss))
 
 
-def visualize(test_loader):
+def visualize(model, test_loader):
     model.train()
     train_loss = 0
     temp = args.temp
@@ -243,31 +246,55 @@ def visualize(test_loader):
         # print("batch idx", batch_idx)
         if args.cuda:
             data = data.cuda()
-        optimizer.zero_grad()
         recon_batch, qy = model(data, temp, args.hard)
         print("original data", data[:2])
         print("recon batch", recon_batch[:2])
-        print()
+        input()
 
 def run():
+    latent_dim = 10
+    categorical_dim = 6
+
+    temp_min = 0.5
+    ANNEAL_RATE = 0.00003
+
+    model = VAE_gumbel(latent_dim, categorical_dim)
+    if args.cuda:
+        model.cuda()
+
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
     # train_loader, test_loader = load_mnist()
     train_loader, test_loader = load_support()
-    for epoch in range(1, args.epochs + 1):
-        
-        train(epoch, train_loader)
-        test(epoch, test_loader)
 
-        M = 64 * latent_dim
-        np_y = np.zeros((M, categorical_dim), dtype=np.float32)
-        np_y[range(M), np.random.choice(categorical_dim, M)] = 1
-        np_y = np.reshape(np_y, [M // latent_dim, latent_dim, categorical_dim])
-        sample = torch.from_numpy(np_y).view(M // latent_dim, latent_dim * categorical_dim)
-        if args.cuda:
-            sample = sample.cuda()
-        sample = model.decode(sample).cpu()
-        # save_image(sample.data.view(M // latent_dim, 1, 28, 28),
-        #            'data/sample_' + str(epoch) + '.png')
-    visualize(test_loader)
+    for epoch in range(1, args.epochs + 1):
+        train(model, epoch, train_loader, optimizer, ANNEAL_RATE, temp_min, categorical_dim)
+        test(model, epoch, test_loader, optimizer, ANNEAL_RATE, temp_min, categorical_dim)
+
+    M = 64 * latent_dim
+    np_y = np.zeros((M, categorical_dim), dtype=np.float32)
+    np_y[range(M), np.random.choice(categorical_dim, M)] = 1
+    np_y = np.reshape(np_y, [M // latent_dim, latent_dim, categorical_dim])
+    sample = torch.from_numpy(np_y).view(M // latent_dim, latent_dim * categorical_dim)
+    # print("random", sample[:10])
+    if args.cuda:
+        sample = sample.cuda()
+    sample = model.decode(sample).cpu()
+    save_image(sample.data.view(M // latent_dim, -1),
+                '../training/support/sample_' + str(epoch) + '.png')
+    
+    # generate for each class
+    # for i in range(categorical_dim):
+    #     M = 64 * latent_dim
+    #     np_y = np.zeros((M, categorical_dim), dtype=np.float32)
+    #     np_y[range(M), i] = 1
+    #     np_y = np.reshape(np_y, [M // latent_dim, latent_dim, categorical_dim])
+    #     sample = torch.from_numpy(np_y).view(M // latent_dim, latent_dim * categorical_dim)
+    #     # print(i, sample[:10])
+    #     if args.cuda:
+    #         sample = sample.cuda()
+    #     sample = model.decode(sample).cpu()
+    #     save_image(sample.data.view(M // latent_dim, -1),
+    #                 f'../training/support/sample_class_{i+1}.png')
 
 if __name__ == '__main__':
     run()
