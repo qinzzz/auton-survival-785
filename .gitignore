@@ -3,3 +3,6 @@
 *.pyc
 */__pycache__/
 training/
+VaDE/data/*
+VaDE/logs/*
+VaDE/pretrain_model.pk
