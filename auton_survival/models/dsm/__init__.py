@@ -23,16 +23,12 @@
 
 
 r"""
-
 Deep Survival Machines
 ----------------------
-
 .. figure:: https://ndownloader.figshare.com/files/25259852
    :figwidth: 20 %
    :alt: Schematic Description of Deep Survival Machines
-
    Schematic Description of Deep Survival Machines.
-
 **Deep Survival Machines (DSM)** is a fully parametric approach to model
 Time-to-Event outcomes in the presence of Censoring first introduced in
 [\[1\]](https://arxiv.org/abs/2003.01176).
@@ -41,10 +37,8 @@ Analysis'. The key idea behind Deep Survival Machines is to model the
 underlying event outcome distribution as a mixure of some fixed \( k \)
 parametric distributions. The parameters of these mixture distributions as
 well as the mixing weights are modelled using Neural Networks.
-
 Example Usage
 -------------
-
 >>> from dsm import DeepSurvivalMachines
 >>> from dsm import datasets
 >>> # load the SUPPORT dataset.
@@ -55,17 +49,12 @@ Example Usage
 >>> model.fit(x, t, e)
 >>> # estimate the predicted risks at the time
 >>> model.predict_risk(x, 10)
-
-
 Deep Recurrent Survival Machines
 --------------------------------
-
 .. figure:: https://ndownloader.figshare.com/files/28329918
    :figwidth: 20 %
    :alt: Schematic Description of Deep Survival Machines
-
    Schematic Description of Deep Survival Machines.
-
 **Deep Recurrent Survival Machines (DRSM)** builds on the original **DSM**
 model and allows for learning of representations of the input covariates using
 **Recurrent Neural Networks** like **LSTMs, GRUs**. Deep Recurrent Survival
@@ -78,30 +67,22 @@ involve historical context from previous time steps. **DRSM** implementation in
 `DeepRecurrentSurvivalMachines` that accepts lists of data streams and
 corresponding failure times. The module automatically takes care of appropriate
 batching and padding of variable length sequences.
-
-
 Deep Convolutional Survival Machines
 ------------------------------------
-
 Predictive maintenance and medical imaging sometimes requires to work with
 image streams. Deep Convolutional Survival Machines extends **DSM** and
 **DRSM** to learn representations of the input image data using
 convolutional layers. If working with streaming data, the learnt
 representations are then passed through an LSTM to model temporal dependencies
 before determining the underlying survival distributions.
-
 ..warning:: Not Implemented Yet!
-
 References
 ----------
-
 Please cite the following papers if you are using the `auton_survival` package.
-
 [1] [Deep Survival Machines:
 Fully Parametric Survival Regression and
 Representation Learning for Censored Data with Competing Risks."
 IEEE Journal of Biomedical and Health Informatics (2021)](https://arxiv.org/abs/2003.01176)</a>
-
 ```
   @article{nagpal2021dsm,
   title={Deep survival machines: Fully parametric survival regression and representation learning for censored data with competing risks},
@@ -114,10 +95,8 @@ IEEE Journal of Biomedical and Health Informatics (2021)](https://arxiv.org/abs/
   publisher={IEEE}
   }
 ```
-
 [2] [Deep Parametric Time-to-Event Regression with Time-Varying Covariates. AAAI
 Spring Symposium (2021)](http://proceedings.mlr.press/v146/nagpal21a.html)</a>
-
 ```
   @InProceedings{pmlr-v146-nagpal21a,
   title={Deep Parametric Time-to-Event Regression with Time-Varying Covariates},
@@ -127,10 +106,8 @@ Spring Symposium (2021)](http://proceedings.mlr.press/v146/nagpal21a.html)</a>
   publisher={PMLR},
   }
 ```
-
 [3] [Deep Cox Mixtures for Survival Regression. Conference on Machine Learning for
 Healthcare (2021)](https://arxiv.org/abs/2101.06536)</a>
-
 ```
   @inproceedings{nagpal2021dcm,
   title={Deep Cox mixtures for survival regression},
@@ -141,9 +118,7 @@ Healthcare (2021)](https://arxiv.org/abs/2101.06536)</a>
   organization={PMLR}
   }
 ```
-
 [4] [Counterfactual Phenotyping with Censored Time-to-Events (2022)](https://arxiv.org/abs/2202.11089)</a>
-
 ```
   @article{nagpal2022counterfactual,
   title={Counterfactual Phenotyping with Censored Time-to-Events},
@@ -152,8 +127,6 @@ Healthcare (2021)](https://arxiv.org/abs/2101.06536)</a>
   year={2022}
   }
 ```
-
-
 """
 
 from .dsm_torch import DeepSurvivalMachinesTorch
@@ -210,7 +183,6 @@ class DSMBase():
           elbo=True, optimizer="Adam"):
 
     r"""This method is used to train an instance of the DSM model.
-
     Parameters
     ----------
     x: np.ndarray
@@ -237,13 +209,12 @@ class DSMBase():
     optimizer: str
         The choice of the gradient based optimization method. One of
         'Adam', 'RMSProp' or 'SGD'.
-
     """
 
     processed_data = self._preprocess_training_data(x, t, e,
                                                     vsize, val_data,
                                                     self.random_seed)
-    x_train, t_train, e_train, x_val, t_val, e_val = processed_data
+    x_train, t_train, e_train, x_val, t_val, e_val, x_train_normalized, x_val_normalized = processed_data
 
     #Todo: Change this somehow. The base design shouldn't depend on child
     if type(self).__name__ in ["DeepConvolutionalSurvivalMachines",
@@ -255,8 +226,8 @@ class DSMBase():
     maxrisk = int(np.nanmax(e_train.cpu().numpy()))
     model = self._gen_torch_model(inputdim, optimizer, risks=maxrisk)
     model, _ = train_dsm(model,
-                         x_train, t_train, e_train,
-                         x_val, t_val, e_val,
+                         x_train, t_train, e_train, x_train_normalized,
+                         x_val, t_val, e_val, x_val_normalized,
                          n_iter=iters,
                          lr=learning_rate,
                          elbo=elbo,
@@ -273,7 +244,6 @@ class DSMBase():
     r"""This function computes the negative log likelihood of the given data.
     In case of competing risks, the negative log likelihoods are summed over
     the different events' type.
-
     Parameters
     ----------
     x: np.ndarray
@@ -283,7 +253,6 @@ class DSMBase():
     e: np.ndarray
         A numpy array of the event/censoring indicators, \( \delta \).
         \( \delta = r \) means the event r took place.
-
     Returns:
       float: Negative log likelihood.
     """
@@ -292,19 +261,23 @@ class DSMBase():
                       "model using the `fit` method on some training data " +
                       "before calling `_eval_nll`.")
     processed_data = self._preprocess_training_data(x, t, e, 0, None, 0)
-    _, _, _, x_val, t_val, e_val = processed_data
+    _, _, _, x_val, t_val, e_val, _, x_val_nm = processed_data
     x_val, t_val, e_val = x_val,\
         _reshape_tensor_with_nans(t_val),\
         _reshape_tensor_with_nans(e_val)
     loss = 0
     for r in range(self.torch_model.risks):
-      loss += float(losses.conditional_loss(self.torch_model,
-                    x_val, t_val, e_val, elbo=False,
+      # print("x_val.shape: ", x_val.shape)
+      # print("x_val_nm.shape: ", x_val_nm.shape)
+      shape, scale, logits, _, _ = self.torch_model.forward(x_val, x_val_nm, str(r+1))
+      loss += float(losses.conditional_loss(self.torch_model.dist, self.torch_model.discount,
+                    shape, scale, logits, self.torch_model.k, t_val, e_val, elbo=False,
                     risk=str(r+1)).detach().numpy())
     return loss
 
   def _preprocess_test_data(self, x):
-    return torch.from_numpy(x)
+    x_nm = (x - x.min(axis=0)) / (x.max(axis=0) - x.min(axis=0))
+    return torch.from_numpy(x), torch.from_numpy(x_nm)
 
   def _preprocess_training_data(self, x, t, e, vsize, val_data, random_seed):
 
@@ -313,9 +286,14 @@ class DSMBase():
     np.random.shuffle(idx)
     x_train, t_train, e_train = x[idx], t[idx], e[idx]
 
+    # normalize
+    x_train_normalized = (x_train - x_train.min(axis=0)) / (x_train.max(axis=0) - x_train.min(axis=0))
+
     x_train = torch.from_numpy(x_train).double()
     t_train = torch.from_numpy(t_train).double()
     e_train = torch.from_numpy(e_train).double()
+
+    x_train_normalized = torch.from_numpy(x_train_normalized).double()    
 
     if val_data is None:
 
@@ -326,27 +304,35 @@ class DSMBase():
       t_train = t_train[:-vsize]
       e_train = e_train[:-vsize]
 
+      x_val_normalized = x_train_normalized[-vsize:]
+      x_train_normalized = x_train_normalized[:-vsize]
+      # print("x_tain.shape: ", x_train.shape)
+      # print("x_train_normalized.shape: ", x_train_normalized.shape)
+
     else:
 
       x_val, t_val, e_val = val_data
+
+      x_val_normalized = (x_val - x_val.min(axis=0)) / (x_val.max(axis=0) - x_val.min(axis=0))
 
       x_val = torch.from_numpy(x_val).double()
       t_val = torch.from_numpy(t_val).double()
       e_val = torch.from_numpy(e_val).double()
 
-    return (x_train, t_train, e_train, x_val, t_val, e_val)
+      x_val_normalized = torch.from_numpy(x_val_normalized).double()
+
+
+    return (x_train, t_train, e_train, x_val, t_val, e_val, x_train_normalized, x_val_normalized)
 
 
   def predict_mean(self, x, risk=1):
     r"""Returns the mean Time-to-Event \( t \)
-
     Parameters
     ----------
     x: np.ndarray
         A numpy array of the input features, \( x \).
     Returns:
       np.array: numpy array of the mean time to event.
-
     """
 
     if self.fitted:
@@ -360,7 +346,6 @@ class DSMBase():
   def predict_risk(self, x, t, risk=1):
     r"""Returns the estimated risk of an event occuring before time \( t \)
       \( \widehat{\mathbb{P}}(T\leq t|X) \) for some input data \( x \).
-
     Parameters
     ----------
     x: np.ndarray
@@ -370,7 +355,6 @@ class DSMBase():
         to be computed
     Returns:
       np.array: numpy array of the risks at each time in t.
-
     """
 
     if self.fitted:
@@ -384,7 +368,6 @@ class DSMBase():
   def predict_survival(self, x, t, risk=1):
     r"""Returns the estimated survival probability at time \( t \),
       \( \widehat{\mathbb{P}}(T > t|X) \) for some input data \( x \).
-
     Parameters
     ----------
     x: np.ndarray
@@ -394,13 +377,12 @@ class DSMBase():
         to be computed
     Returns:
       np.array: numpy array of the survival probabilites at each time in t.
-
     """
-    x = self._preprocess_test_data(x)
+    x, x_nm = self._preprocess_test_data(x)
     if not isinstance(t, list):
       t = [t]
     if self.fitted:
-      scores = losses.predict_cdf(self.torch_model, x, t, risk=str(risk))
+      scores = losses.predict_cdf(self.torch_model, x, x_nm, t, risk=str(risk))
       return np.exp(np.array(scores)).T
     else:
       raise Exception("The model has not been fitted yet. Please fit the " +
@@ -410,7 +392,6 @@ class DSMBase():
   def predict_pdf(self, x, t, risk=1):
     r"""Returns the estimated pdf at time \( t \),
       \( \widehat{\mathbb{P}}(T = t|X) \) for some input data \( x \). 
-
     Parameters
     ----------
     x: np.ndarray
@@ -420,7 +401,6 @@ class DSMBase():
         to be computed
     Returns:
       np.array: numpy array of the estimated pdf at each time in t.
-
     """
     x = self._preprocess_test_data(x)
     if not isinstance(t, list):
@@ -436,21 +416,17 @@ class DSMBase():
 
 class DeepSurvivalMachines(DSMBase):
   """A Deep Survival Machines model.
-
   This is the main interface to a Deep Survival Machines model.
   A model is instantiated with approporiate set of hyperparameters and
   fit on numpy arrays consisting of the features, event/censoring times
   and the event/censoring indicators.
-
   For full details on Deep Survival Machines, refer to our paper [1].
-
   References
   ----------
   [1] <a href="https://arxiv.org/abs/2003.01176">Deep Survival Machines:
   Fully Parametric Survival Regression and
   Representation Learning for Censored Data with Competing Risks."
   arXiv preprint arXiv:2003.01176 (2020)</a>
-
   Parameters
   ----------
   k: int
@@ -469,13 +445,11 @@ class DeepSurvivalMachines(DSMBase):
       a float in [0,1] that determines how to discount the tail bias
       from the uncensored instances.
       Default is 1.
-
   Example
   -------
   >>> from dsm import DeepSurvivalMachines
   >>> model = DeepSurvivalMachines()
   >>> model.fit(x, t, e)
-
   """
 
   def __call__(self):
@@ -493,15 +467,12 @@ class DeepRecurrentSurvivalMachines(DSMBase):
 
   """The Deep Recurrent Survival Machines model to handle data with
   time-dependent covariates.
-
   For full details on Deep Recurrent Survival Machines, refer to our paper [1].
-
   References
   ----------
   [1] <a href="http://proceedings.mlr.press/v146/nagpal21a.html">
   Deep Parametric Time-to-Event Regression with Time-Varying Covariates
   AAAI Spring Symposium on Survival Prediction</a>
-
   """
 
   def __init__(self, k=3, layers=None, hidden=None,
@@ -582,7 +553,6 @@ class DeepRecurrentSurvivalMachines(DSMBase):
 class DeepConvolutionalSurvivalMachines(DSMBase):
   """The Deep Convolutional Survival Machines model to handle data with
   image-based covariates.
-
   """
 
   def __init__(self, k=3, layers=None, hidden=None, 
@@ -617,7 +587,6 @@ class DeepCNNRNNSurvivalMachines(DeepRecurrentSurvivalMachines):
 
   """The Deep CNN-RNN Survival Machines model to handle data with
   moving image streams.
-
   """
 
   def __init__(self, k=3, layers=None, hidden=None,
