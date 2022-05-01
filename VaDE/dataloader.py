@@ -56,8 +56,9 @@ def get_support(data_dir="../auton_survival/datasets", batch_size=128):
     x_val = x_val.astype(np.float32)
 
     train_loader = torch.utils.data.DataLoader(x_train, batch_size=batch_size, shuffle=True)
+    val_loader = torch.utils.data.DataLoader(x_val, batch_size=batch_size, shuffle=True)
     
-    return train_loader, None
+    return train_loader, val_loader
 
 
 

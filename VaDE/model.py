@@ -19,7 +19,6 @@ def cluster_acc(Y_pred, Y):
     for i in range(Y_pred.size):
         w[Y_pred[i], Y[i]] += 1
     row, col = linear_sum_assignment(w.max() - w)
-    # print("ind", ind)
     return sum([w[i,j] for i,j in zip(row, col)])*1.0/Y_pred.size, w
 
 
@@ -86,7 +85,7 @@ class VaDE(nn.Module):
 
     def pre_train(self,dataloader,pre_epoch=10):
 
-        if  not os.path.exists('./pretrain_model.pk'):
+        if not os.path.exists('./pretrain_model.pk'):
 
             Loss=nn.MSELoss()
             opti=Adam(itertools.chain(self.encoder.parameters(),self.decoder.parameters()))

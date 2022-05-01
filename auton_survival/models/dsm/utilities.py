@@ -156,7 +156,7 @@ def train_dsm(model,
   for i in tqdm(range(n_iter)):
 
     x_train, t_train, e_train = shuffle(x_train, t_train, e_train, random_state=i)
-
+    total_loss = 0
     for j in range(nbatches):
 
       xb = x_train[j*bs:(j+1)*bs]
@@ -175,9 +175,10 @@ def train_dsm(model,
                                  _reshape_tensor_with_nans(eb),
                                  elbo=elbo,
                                  risk=str(r+1))
-      #print ("Train Loss:", float(loss))
+      total_loss += loss.item()
       loss.backward()
       optimizer.step()
+    print("train loss", total_loss / nbatches)
 
     valid_loss = 0
     for r in range(model.risks):
@@ -191,6 +192,8 @@ def train_dsm(model,
     valid_loss = valid_loss.detach().cpu().numpy()
     costs.append(float(valid_loss))
     dics.append(deepcopy(model.state_dict()))
+
+    print("valid loss", valid_loss)
 
     if costs[-1] >= oldcost:
       if patience == 2:
