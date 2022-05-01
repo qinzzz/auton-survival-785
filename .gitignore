@@ -6,3 +6,4 @@ training/
 VaDE/data/*
 VaDE/logs/*
 VaDE/pretrain_model.pk
+pretrain_model.pk

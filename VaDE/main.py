@@ -14,10 +14,11 @@ import torch.nn as nn
 if __name__ == '__main__':
 
     parse=argparse.ArgumentParser(description='VaDE')
-    parse.add_argument('--batch_size',type=int,default=800)
+    parse.add_argument('--lr',type=float,default=1e-4)
+    parse.add_argument('--batch_size',type=int,default=128)
     parse.add_argument('--datadir',type=str,default='./data/mnist')
-    parse.add_argument('--nClusters',type=int,default=6)
-
+    parse.add_argument('--nClusters',type=int,default=3)
+    parse.add_argument('--epochs',type=int,default=100)
     parse.add_argument('--hid_dim',type=int,default=10)
     parse.add_argument('--cuda',type=bool,default=False)
 
@@ -33,11 +34,11 @@ if __name__ == '__main__':
 
     vade.pre_train(DL,pre_epoch=50)
 
-    opti=Adam(vade.parameters(),lr=1e-3)
+    opti=Adam(vade.parameters(),lr=args.lr)
     lr_s=StepLR(opti,step_size=10,gamma=0.95)
 
     writer=SummaryWriter('./logs')
-    epoch_bar=tqdm(range(300))
+    epoch_bar=tqdm(range(args.epochs))
     tsne=TSNE()
 
     for epoch in epoch_bar:
@@ -65,21 +66,18 @@ if __name__ == '__main__':
                 # tru.append(y.numpy())
                 input_data.append(x)
                 pred.append(vade.predict(x))
-                
-
-        # tru=np.concatenate(tru,0)
-        
 
         writer.add_scalar('loss',L/len(DL),epoch)
         # writer.add_scalar('acc',cluster_acc(pre,tru)[0]*100,epoch)
         writer.add_scalar('lr',lr_s.get_lr()[0],epoch)
-
+        print("predicted:", pred)
         epoch_bar.write('Loss={:.4f},LR={:.4f}'.format(L/len(DL), lr_s.get_lr()[0]))
     
     xs = []
     preds = []
     for x in DL:
         pred = vade.predict(x)
+       
         preds.append(pred)
         xs.append(x)
 
@@ -88,7 +86,7 @@ if __name__ == '__main__':
     print("xs", xs.shape)
     print("preds", preds.shape)
 
-    with open("pred_clusters.npy", "wb") as f:
+    with open(f"pred_clusters_{args.lr}_{args.batch_size}_{args.nClusters}.npy", "wb") as f:
         np.save(f, xs)
         np.save(f, preds)
 
