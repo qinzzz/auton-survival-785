@@ -127,10 +127,10 @@ def unconditional_loss(model, t, e, risk='1'):
     raise NotImplementedError('Distribution: '+model.dist+
                               ' not implemented yet.')
 
-def _conditional_normal_loss(model, x, t, e, elbo=True, risk='1'):
+def _conditional_normal_loss(alpha, shape, scale, logits, k, t, e, elbo=True, risk='1'):
 
-  alpha = model.discount
-  shape, scale, logits = model.forward(x, risk)
+  # alpha = model.discount
+  # shape, scale, logits = model.forward(x, risk)
 
   lossf = []
   losss = []
@@ -138,7 +138,7 @@ def _conditional_normal_loss(model, x, t, e, elbo=True, risk='1'):
   k_ = shape
   b_ = scale
 
-  for g in range(model.k):
+  for g in range(k):
 
     mu = k_[:, g]
     sigma = b_[:, g]
@@ -179,10 +179,10 @@ def _conditional_normal_loss(model, x, t, e, elbo=True, risk='1'):
 
   return -ll/float(len(uncens)+len(cens))
 
-def _conditional_lognormal_loss(model, x, t, e, elbo=True, risk='1'):
+def _conditional_lognormal_loss(alpha, shape, scale, logits, k, t, e, elbo=True, risk='1'):
 
-  alpha = model.discount
-  shape, scale, logits = model.forward(x, risk)
+  # alpha = model.discount
+  # shape, scale, logits = model.forward(x, risk)
 
   lossf = []
   losss = []
@@ -190,7 +190,7 @@ def _conditional_lognormal_loss(model, x, t, e, elbo=True, risk='1'):
   k_ = shape
   b_ = scale
 
-  for g in range(model.k):
+  for g in range(k):
 
     mu = k_[:, g]
     sigma = b_[:, g]
@@ -232,10 +232,10 @@ def _conditional_lognormal_loss(model, x, t, e, elbo=True, risk='1'):
   return -ll/float(len(uncens)+len(cens))
 
 
-def _conditional_weibull_loss(model, x, t, e, elbo=True, risk='1'):
+def _conditional_weibull_loss(alpha, shape, scale, logits, k, t, e, elbo=True, risk='1'):
 
-  alpha = model.discount
-  shape, scale, logits = model.forward(x, risk)
+  # alpha = model.discount
+  # shape, scale, logits = model.forward(x, risk)
 
   k_ = shape
   b_ = scale
@@ -243,7 +243,7 @@ def _conditional_weibull_loss(model, x, t, e, elbo=True, risk='1'):
   lossf = []
   losss = []
 
-  for g in range(model.k):
+  for g in range(k):
 
     k = k_[:, g]
     b = b_[:, g]
@@ -281,23 +281,23 @@ def _conditional_weibull_loss(model, x, t, e, elbo=True, risk='1'):
   return -ll/float(len(uncens)+len(cens))
 
 
-def conditional_loss(model, x, t, e, elbo=True, risk='1'):
+def conditional_loss(dist, alpha, shape, scale, logits, k, t, e, elbo=True, risk='1'):
 
-  if model.dist == 'Weibull':
-    return _conditional_weibull_loss(model, x, t, e, elbo, risk)
-  elif model.dist == 'LogNormal':
-    return _conditional_lognormal_loss(model, x, t, e, elbo, risk)
-  elif model.dist == 'Normal':
-    return _conditional_normal_loss(model, x, t, e, elbo, risk)
+  if dist == 'Weibull':
+    return _conditional_weibull_loss(alpha, shape, scale, logits, k, t, e, elbo, risk)
+  elif dist == 'LogNormal':
+    return _conditional_lognormal_loss(alpha, shape, scale, logits, k, t, e, elbo, risk)
+  elif dist == 'Normal':
+    return _conditional_normal_loss(alpha, shape, scale, logits, k, t, e, elbo, risk)
   else:
-    raise NotImplementedError('Distribution: '+model.dist+
+    raise NotImplementedError('Distribution: '+dist+
                               ' not implemented yet.')
 
 def _weibull_pdf(model, x, t_horizon, risk='1'):
 
   squish = nn.LogSoftmax(dim=1)
 
-  shape, scale, logits = model.forward(x, risk)
+  shape, scale, logits, _, _ = model.forward(x, risk)
   logits = squish(logits)
 
   k_ = shape
@@ -328,11 +328,11 @@ def _weibull_pdf(model, x, t_horizon, risk='1'):
 
   return pdfs
 
-def _weibull_cdf(model, x, t_horizon, risk='1'):
+def _weibull_cdf(model, x, x_nm, t_horizon, risk='1'):
 
   squish = nn.LogSoftmax(dim=1)
 
-  shape, scale, logits = model.forward(x, risk)
+  shape, scale, logits, _, _ = model.forward(x, x_nm, risk)
   logits = squish(logits)
 
   k_ = shape
@@ -365,7 +365,7 @@ def _weibull_mean(model, x, risk='1'):
 
   squish = nn.LogSoftmax(dim=1)
 
-  shape, scale, logits = model.forward(x, risk)
+  shape, scale, logits, _, _ = model.forward(x, risk)
   logits = squish(logits)
 
   k_ = shape
@@ -391,11 +391,11 @@ def _weibull_mean(model, x, risk='1'):
 
 
 
-def _lognormal_cdf(model, x, t_horizon, risk='1'):
+def _lognormal_cdf(model, x, x_nm, t_horizon, risk='1'):
 
   squish = nn.LogSoftmax(dim=1)
 
-  shape, scale, logits = model.forward(x, risk)
+  shape, scale, logits, _, _ = model.forward(x, x_nm, risk)
   logits = squish(logits)
 
   k_ = shape
@@ -428,11 +428,11 @@ def _lognormal_cdf(model, x, t_horizon, risk='1'):
 
   return cdfs
 
-def _normal_cdf(model, x, t_horizon, risk='1'):
+def _normal_cdf(model, x, x_nm, t_horizon, risk='1'):
 
   squish = nn.LogSoftmax(dim=1)
 
-  shape, scale, logits = model.forward(x, risk)
+  shape, scale, logits = model.forward(x, x_nm, risk)
   logits = squish(logits)
 
   k_ = shape
@@ -512,14 +512,14 @@ def predict_pdf(model, x, t_horizon, risk='1'):
                               ' not implemented yet.')
 
 
-def predict_cdf(model, x, t_horizon, risk='1'):
+def predict_cdf(model, x, x_nm, t_horizon, risk='1'):
   torch.no_grad()
   if model.dist == 'Weibull':
-    return _weibull_cdf(model, x, t_horizon, risk)
+    return _weibull_cdf(model, x, x_nm, t_horizon, risk)
   if model.dist == 'LogNormal':
-    return _lognormal_cdf(model, x, t_horizon, risk)
+    return _lognormal_cdf(model, x, x_nm, t_horizon, risk)
   if model.dist == 'Normal':
-    return _normal_cdf(model, x, t_horizon, risk)
+    return _normal_cdf(model, x, x_nm, t_horizon, risk)
   else:
     raise NotImplementedError('Distribution: '+model.dist+
                               ' not implemented yet.')

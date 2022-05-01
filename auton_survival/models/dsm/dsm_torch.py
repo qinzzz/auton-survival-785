@@ -35,6 +35,8 @@ Note: NOT DESIGNED TO BE CALLED DIRECTLY!!!
 import torch
 from torch import nn
 
+from .gumbel_softmax_vae import *
+
 __pdoc__ = {}
 
 for clsn in ['DeepSurvivalMachinesTorch',
@@ -159,9 +161,12 @@ class DeepSurvivalMachinesTorch(torch.nn.Module):
       raise NotImplementedError('Distribution: '+self.dist+' not implemented'+
                                 ' yet.')
 
-    self.gate = nn.ModuleDict({str(r+1): nn.Sequential(
-        nn.Linear(lastdim, self.k, bias=False)
-        ) for r in range(self.risks)})
+    # self.gate = nn.ModuleDict({str(r+1): nn.Sequential(
+    #     nn.Linear(lastdim, self.k, bias=False)
+    #     ) for r in range(self.risks)})
+
+    self.vae = nn.ModuleDict({str(r+1): VAE_gumbel(categorical_dim=self.k)
+         for r in range(self.risks)})
 
     self.scaleg = nn.ModuleDict({str(r+1): nn.Sequential(
         nn.Linear(lastdim, self.k, bias=True)
@@ -193,7 +198,7 @@ class DeepSurvivalMachinesTorch(torch.nn.Module):
     self.embedding = create_representation(inputdim, layers, 'ReLU6')
 
 
-  def forward(self, x, risk='1'):
+  def forward(self, x, x_normalized, risk='1'):
     """The forward function that is called when data is passed through DSM.
 
     Args:
@@ -203,9 +208,24 @@ class DeepSurvivalMachinesTorch(torch.nn.Module):
     """
     xrep = self.embedding(x)
     dim = x.shape[0]
-    return(self.act(self.shapeg[risk](xrep))+self.shape[risk].expand(dim, -1),
-           self.act(self.scaleg[risk](xrep))+self.scale[risk].expand(dim, -1),
-           self.gate[risk](xrep)/self.temp)
+
+    shape_out = self.act(self.shapeg[risk](xrep))+self.shape[risk].expand(dim, -1)
+    scale_out = self.act(self.scaleg[risk](xrep))+self.scale[risk].expand(dim, -1)
+    # gate_out = self.gate[risk](xrep) / self.temp
+    z, qy = self.vae[risk].vae_encode(x_normalized, self.temp, False)
+    vae_out = z.mean(dim=1)
+
+
+    # print("gate_out.shape: ", gate_out.shape)
+    # print("z.shape: ", z.shape)
+    # print("qy.shape: ", qy.shape)
+    # print("vae_out.shape: ", vae_out.shape)
+
+    # return(self.act(self.shapeg[risk](xrep))+self.shape[risk].expand(dim, -1),
+    #        self.act(self.scaleg[risk](xrep))+self.scale[risk].expand(dim, -1),
+    #        self.gate[risk](xrep)/self.temp)
+
+    return (shape_out, scale_out, vae_out, z, qy)
 
   def get_shape_scale(self, risk='1'):
     return(self.shape[risk], self.scale[risk])

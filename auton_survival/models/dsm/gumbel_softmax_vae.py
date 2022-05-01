@@ -36,12 +36,16 @@ parser.add_argument('--log-interval', type=int, default=10, metavar='N',
 parser.add_argument('--hard', action='store_true', default=False,
                     help='hard Gumbel softmax')
 
-args = parser.parse_args()
-args.cuda = not args.no_cuda and torch.cuda.is_available()
+# args = parser.parse_args()
+args, unknown = parser.parse_known_args()
+# args.cuda = not args.no_cuda and torch.cuda.is_available()
+args.cuda = False
 
 torch.manual_seed(args.seed)
 if args.cuda:
     torch.cuda.manual_seed(args.seed)
+
+
 
 kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
 
@@ -107,7 +111,8 @@ def sample_gumbel(shape, eps=1e-20):
 
 def gumbel_softmax_sample(logits, temperature):
     y = logits + sample_gumbel(logits.size())
-    return F.softmax(y / temperature, dim=-1)
+    # return F.softmax(y / temperature, dim=-1)
+    return y / temperature
 
 
 def gumbel_softmax(logits, temperature, hard=False, latent_dim=3, categorical_dim=3):
@@ -119,7 +124,8 @@ def gumbel_softmax(logits, temperature, hard=False, latent_dim=3, categorical_di
     y = gumbel_softmax_sample(logits, temperature)
     
     if not hard:
-        return y.view(-1, latent_dim * categorical_dim)
+        # return y.view(-1, latent_dim, categorical_dim)
+        return y
 
     shape = y.size()
     _, ind = y.max(dim=-1)
@@ -128,11 +134,11 @@ def gumbel_softmax(logits, temperature, hard=False, latent_dim=3, categorical_di
     y_hard = y_hard.view(*shape)
     # Set gradients w.r.t. y_hard gradients w.r.t. y
     y_hard = (y_hard - y).detach() + y
-    return y_hard.view(-1, latent_dim * categorical_dim)
+    return y_hard.view(-1, latent_dim, categorical_dim)
 
 
 class VAE_gumbel(nn.Module):
-    def __init__(self, latent_dim=3, categorical_dim=3):
+    def __init__(self, latent_dim=30, categorical_dim=3):
         super(VAE_gumbel, self).__init__()
 
         self.latent_dim = latent_dim
@@ -166,6 +172,23 @@ class VAE_gumbel(nn.Module):
         z = gumbel_softmax(q_y, temp, hard, self.latent_dim, self.categorical_dim)
         return self.decode(z), F.softmax(q_y, dim=-1).reshape(*q.size())
 
+    def vae_encode(self, x, temp, hard):
+        h1 = self.relu(self.fc1(x))
+        h2 = self.relu(self.fc2(h1))
+        q = self.relu(self.fc3(h2))
+
+        q_y = q.view(q.size(0), self.latent_dim, self.categorical_dim)
+        z = gumbel_softmax(q_y, temp, hard, self.latent_dim, self.categorical_dim)
+        return z, F.softmax(q_y, dim=-1).reshape(*q.size())
+
+    def vae_decode(self, z):
+        z = F.softmax(z, dim=-1).reshape(-1, self.latent_dim * self.categorical_dim)
+        h4 = self.relu(self.fc4(z))
+        h5 = self.relu(self.fc5(h4))
+        return self.sigmoid(self.fc6(h5))
+
+
+
 # Reconstruction + KL divergence losses summed over all elements and batch
 def loss_function(recon_x, x, qy, categorical_dim):
     BCE = F.binary_cross_entropy(recon_x, x, reduction="mean")
@@ -176,7 +199,7 @@ def loss_function(recon_x, x, qy, categorical_dim):
     log_ratio = torch.log(qy * categorical_dim + 1e-20)
     KLD = torch.sum(qy * log_ratio, dim=-1).mean()
 
-    return BCE, 0.01 * KLD
+    return BCE + 0.01 * KLD
 
 
 def train(model, epoch, train_loader, optimizer, ANNEAL_RATE, temp_min, categorical_dim):

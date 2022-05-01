@@ -24,6 +24,7 @@
 
 """Utility functions to train the Deep Survival Machines models"""
 
+from auton_survival.models.dsm.gumbel_softmax_vae import loss_function
 from .dsm_torch import DeepSurvivalMachinesTorch
 from .losses import unconditional_loss, conditional_loss
 
@@ -112,11 +113,17 @@ def _get_padded_targets(t):
   return np.array(padt)[:, :, np.newaxis]
 
 def train_dsm(model,
-              x_train, t_train, e_train,
-              x_valid, t_valid, e_valid,
+              x_train, t_train, e_train, x_train_normalized,
+              x_valid, t_valid, e_valid, x_valid_normalized,
               n_iter=10000, lr=1e-3, elbo=True,
               bs=100, random_seed=0):
   """Function to train the torch instance of the model."""
+
+  # print("x_train: ", x_train[:3])
+  # print("x_val: ", x_valid[:3])
+  # print("x_train_normalized: ", x_train_normalized[:3])
+  # print("x_val_normalized: ", x_valid_normalized[:3])
+
 
   torch.manual_seed(random_seed)
   np.random.seed(random_seed)
@@ -155,41 +162,66 @@ def train_dsm(model,
   i = 0
   for i in tqdm(range(n_iter)):
 
-    x_train, t_train, e_train = shuffle(x_train, t_train, e_train, random_state=i)
+    x_train, t_train, e_train, x_train_normalized = shuffle(x_train, t_train, e_train, x_train_normalized, random_state=i)
 
     for j in range(nbatches):
 
       xb = x_train[j*bs:(j+1)*bs]
       tb = t_train[j*bs:(j+1)*bs]
       eb = e_train[j*bs:(j+1)*bs]
+      xb_nm = x_train_normalized[j*bs:(j+1)*bs]
 
       if xb.shape[0] == 0:
         continue
 
       optimizer.zero_grad()
-      loss = 0
+      dsm_loss = 0
+      vae_loss = 0
       for r in range(model.risks):
-        loss += conditional_loss(model,
-                                 xb,
+        shape, scale, logits, z, qy = model.forward(xb, xb_nm, str(r+1))
+        dsm_loss += conditional_loss(model.dist,
+                                 model.discount,
+                                 shape,
+                                 scale,
+                                 logits,
+                                 model.k,
                                  _reshape_tensor_with_nans(tb),
                                  _reshape_tensor_with_nans(eb),
                                  elbo=elbo,
                                  risk=str(r+1))
-      #print ("Train Loss:", float(loss))
+
+        vae_loss += loss_function(model.vae[str(r+1)].vae_decode(z), xb_nm, qy, model.k)
+
+      # print("train_dsm_loss: ", dsm_loss.item())
+      # print("train_vae_loss: ", vae_loss.item())
+
+      loss = dsm_loss + vae_loss
       loss.backward()
       optimizer.step()
 
-    valid_loss = 0
+    valid_dsm_loss = 0
+    valid_vae_loss = 0
     for r in range(model.risks):
-      valid_loss += conditional_loss(model,
-                                     x_valid,
+      shape, scale, logits, z, qy = model.forward(x_valid, x_valid_normalized, str(r+1))
+      valid_dsm_loss += conditional_loss(model.dist,
+                                     model.discount,
+                                     shape,
+                                     scale,
+                                     logits,
+                                     model.k,
                                      t_valid_,
                                      e_valid_,
                                      elbo=False,
                                      risk=str(r+1))
+      valid_vae_loss += loss_function(model.vae[str(r+1)].vae_decode(z), x_valid_normalized, qy, model.k)
 
-    valid_loss = valid_loss.detach().cpu().numpy()
-    costs.append(float(valid_loss))
+    valid_dsm_loss = valid_dsm_loss.detach().cpu().numpy()
+    valid_vae_loss = valid_vae_loss.detach().cpu().numpy()
+
+    # print("valid_dsm_loss: ", valid_dsm_loss.item())
+    # print("valid_vae_loss: ", valid_vae_loss.item())
+
+    costs.append(float(valid_dsm_loss))
     dics.append(deepcopy(model.state_dict()))
 
     if costs[-1] >= oldcost:
