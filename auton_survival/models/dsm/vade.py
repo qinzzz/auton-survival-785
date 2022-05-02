@@ -41,8 +41,8 @@ class Encoder(nn.Module):
             # *block(inter_dims[1],inter_dims[2]),
         )
 
-        self.mu_l=nn.Linear(inter_dims[-1],hid_dim)
-        self.log_sigma2_l=nn.Linear(inter_dims[-1],hid_dim)
+        self.mu_l=nn.Linear(inter_dims[-2],hid_dim)
+        self.log_sigma2_l=nn.Linear(inter_dims[-2],hid_dim)
 
     def forward(self, x):
         e=self.encoder(x)
@@ -58,7 +58,7 @@ class Decoder(nn.Module):
         super(Decoder,self).__init__()
 
         self.decoder=nn.Sequential(
-            *block(hid_dim,inter_dims[-1]),
+            *block(hid_dim,inter_dims[-2]),
             # *block(inter_dims[-1],inter_dims[-2]),
             *block(inter_dims[-2],inter_dims[-3]),
             nn.Linear(inter_dims[-3],input_dim),
